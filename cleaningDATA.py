@@ -1,4 +1,4 @@
-import tkinter as tk   
+import tkinter as tk
 from tkinter import filedialog, messagebox
 import pandas as pd
 import os
@@ -21,19 +21,16 @@ def clean_data():
         else:
             df = pd.read_excel(file_path, header=None, dtype=str)
 
+        # Remove first 20 rows
+        #df = df.iloc[20:].reset_index(drop=True)
+        
+        # Keep only rows where first column contains exactly 8 "!"
+        df = df[df[0].str.count("!") == 8]
+        df = df.reset_index(drop=True)
+
+
         # Split first column by "!"
         df = df[0].str.split("!", expand=True)
-
-        # Fix date format in the first column
-        def clean_date(value):
-            if isinstance(value, str):
-                value = value.replace('*', '')  # Remove '*'
-                if pd.to_datetime(value, format="%d/%m/%y", errors='coerce') is not pd.NaT:
-                    return pd.to_datetime(value, format="%d/%m/%y")
-            return value
-
-        df.iloc[:,0] = df.iloc[:,0].apply(clean_date)  # Apply date fix
-        df.iloc[:,0] = pd.to_datetime(df.iloc[:,0], errors='coerce')
 
         # Rename columns
         df.columns = [
@@ -41,29 +38,53 @@ def clean_data():
             "NBJ", "Nombres Debit", "Nombres Credit", "Taux Decouvert"
         ]
 
+        # Clean date function
+        def clean_date(value):
+            if isinstance(value, str):
+                value = value.replace('*', '').strip()
+                try:
+                    return datetime.strptime(value, "%d/%m/%y")
+                except ValueError:
+                    return None  # Keep invalid dates as NaN
+            return value
+
+        # Apply date cleaning
+        df["Valeur"] = df["Valeur"].apply(clean_date)
+
         # Fill missing dates in "Valeur" column
-        df["Valeur"] = df["Valeur"].fillna(method='ffill')
+        df["Valeur"] = df["Valeur"].ffill()
 
+        # Convert numeric columns
+        def convert_to_number(value):
+            if isinstance(value, str):
+                value = value.replace('.', '').replace(',', '.').strip()
+            try:
+                return float(value)
+            except ValueError:
+                return None  # Keep invalid numbers as NaN
 
-         #Process columns only if they are not empty
         for col in df.columns[1:]:  # Skip first column (date)
-            df[col] = df[col].apply(lambda x: str(x).lstrip() if isinstance(x, str) and x.strip() != '' else x)  # Remove leading spaces
+            df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df[col] = df[col].apply(convert_to_number)
             
-            # Apply replacements only if the cell is not empty
-            df[col] = df[col].apply(lambda x: x.replace('.', '') if isinstance(x, str) and x.strip() != '' else x)
-            df[col] = df[col].apply(lambda x: x.replace(',', '.') if isinstance(x, str) and x.strip() != '' else x)
             
-            # Convert to numeric but keep text if conversion fails
-            df[col] = pd.to_numeric(df[col], errors='ignore')
+        # Divide numeric values by 100
+        for col in df.columns[1:-1]:
+           if col != 'NBJ':
+              df[col] = df[col] / 100
 
-        
-         # Remove completely empty rows
-            df.dropna(how='all', inplace=True)
+        # Divide by 10,000,000 for the last column (Taux Decouvert)
+        df["Taux Decouvert"] = df["Taux Decouvert"] / 10000000
+
+
+        # Remove completely empty rows
+        df.dropna(how='all', inplace=True)
 
         # Remove rows that contain only a date but no other values
-            df = df[~((df.iloc[:, 0].notna()) & (df.iloc[:, 1:].isna().all(axis=1)))]
+        df = df[~((df.iloc[:, 0].notna()) & (df.iloc[:, 1:].isna().all(axis=1)))]
+        print(type(df))  # Vérifie si df est bien un DataFrame
 
-        
+
         # Save cleaned file
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         dir_path = os.path.dirname(file_path)
@@ -97,18 +118,36 @@ def clean_data():
             cell = ws.cell(row=2, column=col_num, value=sub_header)
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-         ## Ensure the first column (dates) is formatted correctly in Excel
-        ws.column_dimensions['A'].width = 12  # Adjust width for readability
+        # 
+        ws.column_dimensions['A'].width = 12
+        
+        # Apply number format to columns B to I
+        for col_letter in ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']:
+            for cell in ws[col_letter]:
+                if isinstance(cell.value, (int, float)):
+                   cell.number_format = '#,##0.00'
+
+        
+        
+
+        
+    
+        
         for cell in ws["A"]:
-            if isinstance(cell.value, datetime):  
-                cell.number_format = "DD/MM/YYYY"  # Ensure only the date is displayed
+          if isinstance(cell.value, datetime):
+                cell.number_format = "DD/MM/YYYY"
+
+   
+        
+       
+
 
         # Save workbook
         wb.save(cleaned_file_path)
         messagebox.showinfo("Success", f"Data cleaning completed!\nSaved at:\n{cleaned_file_path}")
-        
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred: {e}")
+
 
 # GUI Setup
 window = tk.Tk()
